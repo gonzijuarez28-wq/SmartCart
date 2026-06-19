@@ -351,50 +351,82 @@ fun MainAppDrawerStructure(
 
     if (showCompartirDialog) {
         val context = LocalContext.current
-        val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        // Cambiamos 'linkGenerado' por una variable local para el código corto
+        var codigoGeneradoDeLista by remember { mutableStateOf("") }
 
         AlertDialog(
-            onDismissRequest = { showCompartirDialog = false; linkGenerado = "" },
+            onDismissRequest = { showCompartirDialog = false; codigoGeneradoDeLista = "" },
             containerColor = Color(0xFFE8FBF9),
             title = { Text("Compartir Lista Actual", fontWeight = FontWeight.Bold, color = DarkGrayText) },
             text = {
                 Column {
-                    Text("Genera el enlace para poder copiarlo e invitar a otros usuarios:", color = Color.Gray)
+                    Text("Genera un código único para que tu amigo pueda cargar tu lista desde su aplicación:", color = Color.Gray)
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    if (linkGenerado.isEmpty()) {
+                    if (codigoGeneradoDeLista.isEmpty()) {
                         Button(
-                            onClick = { linkGenerado = "https://smartcart-app.web.app/invitacion?listId=\${System.currentTimeMillis()}" },
+                            onClick = {
+                                // 1. Generamos un código corto al azar (ej: smart-4921)
+                                val idUnicoDeLista = "smart-" + (1000..9999).random()
+
+                                // 2. Convertimos tu lista actual de productos a formato Firebase
+                                val datosLista = hashMapOf(
+                                    "items" to productos.map {
+                                        mapOf(
+                                            "nombre" to it.nombre,
+                                            "categoria" to it.categoria,
+                                            "precio" to it.precio,
+                                            "cantidad" to it.cantidad,
+                                            "isChecked" to it.isChecked,
+                                            "notas" to it.notas
+                                        )
+                                    }
+                                )
+
+                                // 3. Lo subimos a la nube (Firestore)
+                                val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                                db.collection("listas_compartidas").document(idUnicoDeLista)
+                                    .set(datosLista)
+                                    .addOnSuccessListener {
+                                        // Guardamos el código para mostrarlo en pantalla
+                                        codigoGeneradoDeLista = idUnicoDeLista
+                                    }
+                                    .addOnFailureListener {
+                                        Toast.makeText(context, "Error al conectar con Firebase", Toast.LENGTH_SHORT).show()
+                                    }
+                            },
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF76EAD7)),
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("🔗 Generar Enlace", color = DarkGrayText) }
+                        ) { Text("🔑 Generar Código de Invitación", color = DarkGrayText) }
                     } else {
-                        Text("¡Enlace generado exitosamente!", fontWeight = FontWeight.Bold, color = Color(0xFF00BFFF))
+                        Text("¡Código generado exitosamente!", fontWeight = FontWeight.Bold, color = Color(0xFF00BFFF))
                         Spacer(modifier = Modifier.height(6.dp))
-                        Box(modifier = Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(8.dp)) {
-                            Text(linkGenerado, fontSize = 11.sp, color = Color.DarkGray)
+                        Box(modifier = Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(8.dp)).padding(8.dp), contentAlignment = Alignment.Center) {
+                            Text(codigoGeneradoDeLista, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.DarkGray)
                         }
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Button(
                             onClick = {
-                                val clipData = android.content.ClipData.newPlainText("Enlace Invitación", linkGenerado)
+                                // 4. Copiamos automáticamente el código corto al portapapeles
+                                val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clipData = android.content.ClipData.newPlainText("Código SmartCart", codigoGeneradoDeLista)
                                 clipboardManager.setPrimaryClip(clipData)
-                                listasCompartidas.add(ListaCompartida(System.currentTimeMillis(), "Lista Compartida", "Enlace Copiado", productos.toList()))
-                                Toast.makeText(context, "¡Enlace copiado al portapapeles!", Toast.LENGTH_SHORT).show()
+
+                                Toast.makeText(context, "¡Código copiado! Pásaselo a tu amigo", Toast.LENGTH_SHORT).show()
                                 showCompartirDialog = false
-                                linkGenerado = ""
+                                codigoGeneradoDeLista = ""
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = AquaBackground),
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Copiar Enlace", color = DarkGrayText, fontWeight = FontWeight.Bold)
+                            Text("Copiar Código", color = DarkGrayText, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showCompartirDialog = false; linkGenerado = "" }) { Text("Cancelar", color = Color.Red) } }
+            confirmButton = { TextButton(onClick = { showCompartirDialog = false; codigoGeneradoDeLista = "" }) { Text("Cancelar", color = Color.Red) } }
         )
     }
 
@@ -489,6 +521,63 @@ fun SmartCartTabsDashboard(
             Column(modifier = Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 when (selectedTab) {
                     0 -> {
+                        var codigoCompartido by remember { mutableStateOf("") }
+                        val context = LocalContext.current
+
+                        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                TextField(
+                                    value = codigoCompartido,
+                                    onValueChange = { codigoCompartido = it },
+                                    placeholder = { Text("Código de lista compartida") },
+                                    modifier = Modifier.weight(1f),
+                                    colors = TextFieldDefaults.colors(
+                                        focusedContainerColor = Color.White,
+                                        unfocusedContainerColor = Color.White
+                                    )
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = {
+                                        if (codigoCompartido.isNotBlank()) {
+                                            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                                            db.collection("listas_compartidas").document(codigoCompartido)
+                                                .get()
+                                                .addOnSuccessListener { document ->
+                                                    if (document.exists()) {
+                                                        val productosFirebase = document.get("items") as? List<Map<String, Any>>
+                                                        if (productosFirebase != null) {
+                                                            productos.clear()
+                                                            for (item in productosFirebase) {
+                                                                productos.add(
+                                                                    Producto(
+                                                                        nombre = item["nombre"] as? String ?: "",
+                                                                        categoria = item["categoria"] as? String ?: "",
+                                                                        precio = (item["precio"] as? Number)?.toDouble() ?: 0.0,
+                                                                        cantidad = (item["cantidad"] as? Number)?.toInt() ?: 1,
+                                                                        isChecked = item["isChecked"] as? Boolean ?: false,
+                                                                        notas = item["notas"] as? String ?: ""
+                                                                    )
+                                                                )
+                                                            }
+                                                            Toast.makeText(context, "¡Lista cargada con éxito!", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    } else {
+                                                        Toast.makeText(context, "El código no existe", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF76EAD7))
+                                ) {
+                                    Text("Cargar", color = DarkGrayText)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
                         if (!showAddInput) {
                             Button(onClick = { showAddInput = true }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFCBD3D6)), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth(0.8f).padding(bottom = 16.dp)) {
                                 Text("Ingresar producto", color = DarkGrayText, fontSize = 16.sp)
